@@ -1,0 +1,3 @@
+
+class AddressesGenerator():
+    pass
