@@ -1,8 +1,9 @@
 import CONFIG
 from logger import logger
+from threads_worker import ThreadsWorker
 
-import ipaddress, subprocess, re
-
+import ipaddress, subprocess
+from queue import Queue
 
 class AddressesGenerator:
     """
@@ -31,6 +32,8 @@ class AddressesGenerator:
         self.__network = None
         self.__hosts = None
         self.__generate_addresses()
+        self.hosts_os = {ip: "" for ip in self.__hosts}
+
 
     def __generate_addresses(self):
         """
@@ -43,7 +46,7 @@ class AddressesGenerator:
 
         try:
             self.__network = ipaddress.ip_network(self.__ipv4_addr)
-            self.__hosts = self.__network.hosts()
+            self.__hosts = list(self.__network.hosts())
         except Exception as e:
             if CONFIG.DEBUG.get("address_generator", True):
                 logger.log("address_generator", f"Error occurred {e}", level="ERROR")
@@ -56,12 +59,12 @@ class AddressesGenerator:
             ttl (int): Time-to-Live value from a network response.
 
         Returns:
-            str: OS type ("Windows", "Another", or empty string if unknown).
+            str: OS type ("Windows", "Another", or "Offline" if unknown/offline).
         """
         if ttl > 120 and ttl < 140:
             return "Windows"
         elif ttl == 0:
-            return ""
+            return "Offline"
         else:
             return "Another"
 
@@ -77,18 +80,18 @@ class AddressesGenerator:
 
         Returns:
             str: Identified OS type based on TTL.
-        """
+        """ 
         ps = [
             "powershell",
             "-Command",
-            f"(Test-Connection {host} -Count 1).ResponseTimeToLive"
+            f"(Test-Connection {str(host)} -Count 1).ResponseTimeToLive"
         ]
         ttl = ""
         try:
             result = subprocess.run(ps, capture_output=True, text=True, check=True)
             ttl = result.stdout.strip()
             if CONFIG.DEBUG.get("address_generator", True):
-                logger.log("address_generator", f"{host} response time: {ttl}", level="DEBUG")           
+                logger.log("address_generator", f"{str(host)} response time: {ttl}", level="DEBUG")           
         except UnicodeEncodeError:
             pass
         except Exception as e:
@@ -99,4 +102,28 @@ class AddressesGenerator:
             ttl = int(ttl)
         except ValueError:
             ttl = 0
-        return self.identify_os(ttl)
+        self.hosts_os[host] = self.identify_os(ttl)
+
+    def run_threads(self, num_threads=4):
+        """
+        Run multiple worker threads to process all hosts concurrently.
+
+        - Creates a Queue with all hosts to be checked.
+        - Spawns `num_threads` ThreadsWorker instances, each of which
+        calls this object's `run_task(host)` for items in the queue.
+        - Starts all threads and waits for them to finish with join().
+        
+        Args:
+            num_threads (int, optional): Number of worker threads to run. Defaults to 4.
+        """
+        q = Queue()
+        for host in self.__hosts:
+            q.put(host)
+
+        threads = [ThreadsWorker(q, self) for _ in range(num_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+
