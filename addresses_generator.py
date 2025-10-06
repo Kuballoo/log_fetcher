@@ -104,7 +104,7 @@ class AddressesGenerator:
             ttl = 0
         self.hosts_os[host] = self.identify_os(ttl)
 
-    def run_threads(self, num_threads=4):
+    def run_threads(self, num_threads):
         """
         Run multiple worker threads to process all hosts concurrently.
 
@@ -114,7 +114,7 @@ class AddressesGenerator:
         - Starts all threads and waits for them to finish with join().
         
         Args:
-            num_threads (int, optional): Number of worker threads to run. Defaults to 4.
+            num_threads (int): Number of worker threads to run.
         """
         q = Queue()
         for host in self.__hosts:
@@ -123,7 +123,6 @@ class AddressesGenerator:
         threads = [ThreadsWorker(q, self) for _ in range(num_threads)]
         for t in threads:
             t.start()
-        for t in threads:
-            t.join()
+        q.join()
 
 

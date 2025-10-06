@@ -1,4 +1,5 @@
 from threading import Thread
+from queue import Empty
 from queue import Queue
 
 class ThreadsWorker(Thread):
@@ -27,9 +28,13 @@ class ThreadsWorker(Thread):
 
         For each item, calls `worker_obj.run_task(item)`.
         """
-        while not self.task_queue.empty():
-            item = self.task_queue.get()
+        while True:
+            try:
+                item = self.task_queue.get_nowait()
+            except Empty:
+                break
             try:
                 self.worker_obj.run_task(item)
             finally:
                 self.task_queue.task_done()
+
