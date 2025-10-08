@@ -7,22 +7,25 @@ from queue import Queue
 
 class AddressesGenerator:
     """
-    Generates network addresses from a given IPv4 address and identifies OS by TTL.
-
+    Generates network addresses from a given IPv4 network or address
+    and identifies the operating system of hosts based on TTL values.
+    
     Attributes:
-        __ipv4_addr (str): The input IPv4 address or network.
-        __network (IPv4Network): The parsed IP network object.
-        __hosts (iterator): Iterator over the host addresses in the network.
+        __ipv4_addr (str): Input IPv4 address or network in CIDR format.
+        __network (IPv4Network): Parsed IP network object.
+        __hosts (list): List of host addresses in the network.
+        hosts_os (dict): Mapping of host IPs to identified OS types.
     """
 
     def __init__(self, ipv4_addr):
         """
         Initialize the AddressesGenerator instance.
 
-        Logs the initialization if debugging is enabled.
+        Parses the input network, generates host addresses, 
+        and initializes OS mapping. Logs initialization if debugging is enabled.
 
         Args:
-            ipv4_addr (str): IPv4 address or network in CIDR format.
+            ipv4_addr (str): IPv4 address or network in CIDR notation.
         """
         if CONFIG.DEBUG.get("address_generator", True):
             logger.log("address_generator", "Initialized AddressesGenerator", level="DEBUG")
@@ -31,14 +34,18 @@ class AddressesGenerator:
         self.__ipv4_addr = ipv4_addr
         self.__network = None
         self.__hosts = None
-        self.__generate_addresses()
-        self.hosts_os = {ip: "" for ip in self.__hosts}
 
+        # Generate host addresses from the provided network
+        self.__generate_addresses()
+
+        # Initialize dictionary mapping host -> OS type
+        self.hosts_os = {ip: "" for ip in self.__hosts}
 
     def __generate_addresses(self):
         """
-        Generate network and host addresses from the provided IPv4 input.
+        Generate host addresses from the provided IPv4 network input.
 
+        Converts input to IPv4Network object and generates a list of hosts.
         Logs progress and errors if debugging is enabled.
         """
         if CONFIG.DEBUG.get("address_generator", True):
@@ -53,15 +60,18 @@ class AddressesGenerator:
 
     def identify_os(self, ttl):
         """
-        Identify the operating system based on TTL value.
+        Identify the operating system based on the TTL value.
 
         Args:
-            ttl (int): Time-to-Live value from a network response.
+            ttl (int): TTL value retrieved from a network response.
 
         Returns:
-            str: OS type ("Windows", "Another", or "Offline" if unknown/offline).
+            str: Detected OS type:
+                - "Windows" if TTL is typical for Windows,
+                - "Another" for other OS types,
+                - "Offline" if TTL is 0 or unrecognized.
         """
-        if ttl > 120 and ttl < 140:
+        if 120 < ttl < 140:
             return "Windows"
         elif ttl == 0:
             return "Offline"
@@ -70,29 +80,28 @@ class AddressesGenerator:
 
     def run_task(self, host):
         """
-        Run a TTL check on a host to determine the OS.
+        Check TTL for a single host and determine its OS.
 
         Executes a PowerShell Test-Connection command to retrieve TTL.
-        Logs the response or any errors if debugging is enabled.
+        Updates the hosts_os mapping. Logs responses and errors if debugging is enabled.
 
         Args:
-            host (str): Host IP address to check.
-
-        Returns:
-            str: Identified OS type based on TTL.
-        """ 
+            host (str): Target host IP address.
+        """
         ps = [
             "powershell",
             "-Command",
             f"(Test-Connection {str(host)} -Count 1).ResponseTimeToLive"
         ]
         ttl = ""
+
         try:
             result = subprocess.run(ps, capture_output=True, text=True, check=True)
             ttl = result.stdout.strip()
             if CONFIG.DEBUG.get("address_generator", True):
-                logger.log("address_generator", f"{str(host)} response time: {ttl}", level="DEBUG")           
+                logger.log("address_generator", f"{str(host)} TTL response: {ttl}", level="DEBUG")
         except UnicodeEncodeError:
+            # Ignore encoding issues
             pass
         except Exception as e:
             if CONFIG.DEBUG.get("address_generator", True):
@@ -102,19 +111,20 @@ class AddressesGenerator:
             ttl = int(ttl)
         except ValueError:
             ttl = 0
+
         self.hosts_os[host] = self.identify_os(ttl)
 
-    def run_threads(self, num_threads):
+    def __run_threads(self, num_threads):
         """
-        Run multiple worker threads to process all hosts concurrently.
+        Run multiple worker threads to process hosts concurrently.
 
-        - Creates a Queue with all hosts to be checked.
-        - Spawns `num_threads` ThreadsWorker instances, each of which
-        calls this object's `run_task(host)` for items in the queue.
-        - Starts all threads and waits for them to finish with join().
-        
+        - Populates a Queue with hosts to check.
+        - Spawns `num_threads` ThreadsWorker instances.
+        - Each worker executes `run_task` on hosts from the queue.
+        - Waits for all threads to finish processing.
+
         Args:
-            num_threads (int): Number of worker threads to run.
+            num_threads (int): Number of worker threads to spawn.
         """
         q = Queue()
         for host in self.__hosts:
@@ -125,4 +135,14 @@ class AddressesGenerator:
             t.start()
         q.join()
 
+    def run_generator(self):
+        """
+        Main entry point to identify Windows hosts in the network.
 
+        Runs multithreaded scanning using configured thread count.
+
+        Returns:
+            list: List of host IPs identified as running Windows.
+        """
+        self.__run_threads(CONFIG.THREADS_COUNT)
+        return [key for key, value in self.hosts_os.items() if value == "Windows"]
