@@ -2,7 +2,7 @@ import CONFIG
 from logger import logger
 from threads_worker import ThreadsWorker
 
-import ipaddress, subprocess
+import subprocess
 from queue import Queue
 from pathlib import Path, PureWindowsPath
 
@@ -44,22 +44,22 @@ class LogFetcher:
             host (str): Target host IP or hostname.
         """
         drive = self.input_path.drive.rstrip(":")
-        path_to_user = PureWindowsPath(f"\\\\{host}\\{drive}$") / self.input_path.relative_to(self.input_path.anchor)
+        path_to_user = PureWindowsPath(f"\\\\{str(host)}\\{drive}$") / self.input_path.relative_to(self.input_path.anchor)
         
         for t in self.log_types:
-            dest_folder = self.output_path / t  # Destination folder for this log type
+            dest_folder = self.output_path / t 
             
-            src = path_to_user / (t + ".evtx")  # Full source path on remote host
-            dest = dest_folder / f"{t}_{host}.evtx"  # Destination file with host appended
+            src = path_to_user / (t + ".evtx")
+            dest = dest_folder / f"{t}_{str(host)}.evtx"
             
             ps = [
                 "powershell",
                 "-Command",
-                f'Copy-Item "{src}" "{dest}"'  # PowerShell copy command
+                f'Copy-Item "{src}" "{dest}"'
             ]
             
             try:
-                subprocess.run(ps, check=True)  # Execute copy command
+                subprocess.run(ps, check=True)
             except Exception as e:
                 if CONFIG.DEBUG.get("log_fetcher", True):
                     logger.log("log_fetcher", f"Error occurred {e}", level="ERROR")
@@ -75,16 +75,13 @@ class LogFetcher:
         """
         q = Queue()
 
-        # Add all target hosts to the queue
         for ip in self.__ips:
             q.put(ip)
         
-        # Create and start worker threads
         threads = [ThreadsWorker(q, self) for _ in range(num_threads)]
         for t in threads:
             t.start()
         
-        # Wait until all tasks in the queue are processed
         q.join()
 
     def run_fetcher(self):
@@ -94,10 +91,8 @@ class LogFetcher:
         Ensures destination folders exist for each log type and
         triggers multithreaded fetching using configured thread count.
         """
-        # Ensure destination folders exist
         for t in self.log_types:
             dest_dir = self.output_path / t
             dest_dir.mkdir(parents=True, exist_ok=True)
         
-        # Run threads to fetch logs
         self.__run_threads(CONFIG.THREADS_COUNT)
