@@ -33,8 +33,9 @@ class Compressor:
         """
         folder_path = self.input_path
         zip_path = self.input_path.with_suffix(".zip")
-        
-        logger.log("compressor", f"Compressing {folder_path} → {zip_path}", level="INFO")
+
+        if CONFIG.DEBUG.get("compressor", True):
+            logger.log("compressor", f"Compressing {folder_path} → {zip_path}", level="DEBUG")
 
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
             for root, _, files in os.walk(folder_path):
@@ -43,7 +44,8 @@ class Compressor:
                     arcname = file_path.relative_to(folder_path)
                     zipf.write(file_path, arcname)
 
-        logger.log("compressor", f"Compression complete: {zip_path}", level="INFO")
+        if CONFIG.DEBUG.get("compressor", True):
+            logger.log("compressor", f"Compression complete: {zip_path}", level="DEBUG")
 
     def run_compressor(self):
         """
